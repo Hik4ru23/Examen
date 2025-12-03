@@ -83,13 +83,13 @@ pipeline {
                 sh '''
                     . venv/bin/activate
                     
-                    # Debug: Verificar versión de Java (ZAP necesita Java 11+)
-                    echo "Versión de Java:"
-                    java -version
-                    
+                    # 1. Iniciar servidor Flask (Usando el nombre correcto de tu archivo)
                     echo "Iniciando servidor Flask..."
+                    # NOTA: Asegúrate de que el nombre del archivo aquí coincida con tu repo (vulnerable_flask_app.py o vulnerable_server.py)
                     nohup python3 vulnerable_flask_app.py > flask.log 2>&1 &
                     SERVER_PID=$!
+                    
+                    # 2. Esperar a que arranque
                     sleep 15
                     
                     # Verificar si Flask sigue vivo
@@ -99,20 +99,18 @@ pipeline {
                         exit 1
                     fi
                     
-                    echo "Atacando con ZAP..."
-                    # EJECUCIÓN SIN SILENCIADOR DE ERRORES
-                    # Usamos ruta explícita para el reporte
-                    /opt/zap/zap.sh -cmd -quickurl http://127.0.0.1:5000 -quickout $(pwd)/zap_report.html
-                    
-                    # Verificación final
-                    if [ -f "zap_report.html" ]; then
-                        echo "EXITO: El reporte se generó correctamente."
-                        ls -l zap_report.html
+                    # 3. Atacar con ZAP
+                    # AGREGAMOS "-port 8090" PARA EVITAR EL CONFLICTO CON JENKINS (8080)
+                    echo "Ejecutando ZAP en puerto 8090..."
+                    if [ -f "$ZAP_DIR/zap.sh" ]; then
+                        $ZAP_DIR/zap.sh -cmd -port 8090 -quickurl http://127.0.0.1:5000 -quickout $(pwd)/zap_report.html || true
                     else
-                        echo "ERROR: ZAP terminó pero NO generó el reporte."
+                        echo "ERROR CRÍTICO: No encuentro zap.sh en $ZAP_DIR"
                         exit 1
                     fi
                     
+                    # 4. Matar servidor
+                    echo "Apagando servidor..."
                     kill $SERVER_PID || true
                 '''
             }
