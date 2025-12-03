@@ -1,176 +1,204 @@
-pipeline {
-    agent any
+from flask import Flask, request, render_template_string, session, redirect, url_for
+import sqlite3
+import os
+import hashlib
 
-    environment {
-        PROJECT_NAME = "Examen"
-        SONARQUBE_URL = "http://sonarqube:9000"
-        SONARQUBE_TOKEN = "sqa_b2152858c8eb361e87d72375849dfe0a986cdb86"
-        TARGET_URL = "http://172.20.190.71:5000"
-        // Definimos la ruta donde instalaremos ZAP
-        ZAP_DIR = "/opt/zap"
-    }
+app = Flask(__name__)
+app.secret_key = os.urandom(24)
 
-    stages {
-        stage('Install Tools') {
-            steps {
-                sh '''
-                    apt update
-                    # 1. Instalamos dependencias: wget (para descargar) y Java (necesario para ZAP)
-                    apt install -y python3 python3-venv python3-pip doxygen graphviz wget default-jre
-                    
-                    # 2. Instalamos ZAP si no existe
-                    if [ ! -d "$ZAP_DIR" ]; then
-                        echo "ZAP no encontrado. Descargando e instalando..."
-                        mkdir -p $ZAP_DIR
-                        # Descargar la versión Linux de ZAP
-                        wget -qO- https://github.com/zaproxy/zaproxy/releases/download/v2.14.0/ZAP_2.14.0_Linux.tar.gz | tar xvz -C $ZAP_DIR --strip-components=1
-                    else
-                        echo "ZAP ya está instalado en $ZAP_DIR"
-                    fi
-                '''
-            }
-        }
-        
-        stage('Setup Environment') {
-            steps {
-                sh '''
-                    python3 -m venv venv
-                    . venv/bin/activate
-                    pip install --upgrade pip
-                    pip install -r requirements.txt
-                '''
-            }
-        }
 
-        stage('Python Security Audit') {
-            steps {
-                sh '''
-                    . venv/bin/activate
-                    pip install pip-audit
-                    mkdir -p dependency-check-report
-                    pip-audit -r requirements.txt -f markdown -o dependency-check-report/pip-audit.md || true
-                '''
-            }
-        }
-        
-        stage('SonarQube Analysis') {
-            steps {
-                script {
-                    def scannerHome = tool 'SonarQubeScanner'
-                    withSonarQubeEnv('SonarQubeScanner') {
-                        sh """
-                            ${scannerHome}/bin/sonar-scanner \
-                                -Dsonar.projectKey=$PROJECT_NAME \
-                                -Dsonar.sources=. \
-                                -Dsonar.host.url=$SONARQUBE_URL \
-                                -Dsonar.login=$SONARQUBE_TOKEN \
-                                -Dsonar.exclusions=venv/**,docs/**,dependency-check-report/**,**/*.html,**/*.css,zap_report.html
-                        """
-                    }
-                }
-            }
-        }
+def get_db_connection():
+    conn = sqlite3.connect('example.db')
+    conn.row_factory = sqlite3.Row
+    return conn
 
-        stage('Dependency Check') {
-            environment {
-                NVD_API_KEY = credentials('nvdApiKey')
-            }
-            steps {
-                dependencyCheck additionalArguments: "--scan . --format HTML --out dependency-check-report --enableExperimental --enableRetired --nvdApiKey ${NVD_API_KEY} --disableOssIndex --disableAssembly", odcInstallation: 'DependencyCheck'
-            }
-        }
 
-        // --- NUEVA ETAPA: DAST CON ZAP ---
-        stage('Dynamic Security Audit (DAST)') {
-            steps {
-                sh '''
-                    # Activar entorno virtual para correr Flask
-                    . venv/bin/activate
-                    
-                    # 1. Ejecutar servidor en segundo plano (nohup)
-                    # Redirigimos la salida a /dev/null para no llenar el log
-                    echo "Iniciando servidor Flask en background..."
-                    nohup python3 vulnerable_flask_app.py > /dev/null 2>&1 &
-                    
-                    # Guardamos el PID (Process ID) para matarlo luego
-                    SERVER_PID=$!
-                    echo "Servidor corriendo con PID: $SERVER_PID"
-                    
-                    # 2. Esperar a que arranque (5 a 10 segundos es prudente)
-                    sleep 10
-                    
-                    # 3. Ejecutar ataque ZAP
-                    # -cmd: modo línea de comandos
-                    # -quickurl: URL objetivo
-                    # -quickout: archivo de reporte de salida
-                    echo "Lanzando ataque OWASP ZAP..."
-                    $ZAP_DIR/zap.sh -cmd -quickurl http://127.0.0.1:5000 -quickout $(pwd)/zap_report.html || true
-                    
-                    # 4. Matar el servidor
-                    echo "Finalizando servidor..."
-                    kill $SERVER_PID
-                '''
-            }
-        }
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
-        stage('Generate Documentation') {
-            steps {
-                sh '''
-                    FILES=$(find . -path "./venv" -prune -o -name "*.py" -print | tr '\n' ' ')
-                    echo "PROJECT_NAME      = 'Examen'" > Doxyfile.clean
-                    echo "OUTPUT_DIRECTORY  = docs" >> Doxyfile.clean
-                    echo "INPUT             = $FILES" >> Doxyfile.clean
-                    echo "GENERATE_HTML     = YES" >> Doxyfile.clean
-                    echo "HAVE_DOT          = YES" >> Doxyfile.clean
-                    echo "EXTRACT_ALL       = YES" >> Doxyfile.clean
-                    
-                    doxygen Doxyfile.clean
-                '''
-            }
-        }
 
-        stage('Publish Reports') {
-            steps {
-                // Publicar OWASP Dependency Check
-                publishHTML([
-                    allowMissing: false,
-                    alwaysLinkToLastBuild: true,
-                    keepAll: true,
-                    reportDir: 'dependency-check-report',
-                    reportFiles: 'dependency-check-report.html',
-                    reportName: 'OWASP Dependency Check Report'
-                ])
+@app.route('/')
+def index():
+    return render_template_string('''
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+            <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" rel="stylesheet">
+            <title>Welcome</title>
+        </head>
+        <body>
+            <div class="container">
+                <h1 class="mt-5">Welcome to the Example Application!</h1>
+                <p class="lead">This is the home page. Please <a href="/login">login</a>.</p>
+            </div>
+        </body>
+        </html>
+    ''')
 
-                // Publicar OWASP ZAP (NUEVO)
-                publishHTML([
-                    allowMissing: false,
-                    alwaysLinkToLastBuild: true,
-                    keepAll: true,
-                    reportDir: '.',
-                    reportFiles: 'zap_report.html',
-                    reportName: 'OWASP ZAP DAST Report'
-                ])
-                
-                publishHTML([
-                    allowMissing: false,
-                    alwaysLinkToLastBuild: true,
-                    keepAll: true,
-                    reportDir: '.',   // El punto significa "carpeta actual"
-                    reportFiles: 'zap_report.html',
-                    reportName: 'OWASP ZAP DAST Report'
-                ])
 
-                // Publicar Doxygen
-                publishHTML([
-                    allowMissing: false,
-                    alwaysLinkToLastBuild: true,
-                    keepAll: true,
-                    reportDir: 'docs/html',
-                    reportFiles: 'index.html',
-                    reportName: 'Doxygen Documentation',
-                    reportTitles: 'Doxygen'
-                ])
-            }
-        }
-    }
-}
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+
+        conn = get_db_connection()
+
+        # Inyección de SQL solo si se detecta un payload de inyección de SQL
+        if "' OR '" in password:
+            query = "SELECT * FROM users WHERE username = '{}' AND password = '{}'".format(
+                username, password)
+            user = conn.execute(query).fetchone()
+        else:
+            query = "SELECT * FROM users WHERE username = ? AND password = ?"
+            hashed_password = hash_password(password)
+            user = conn.execute(query, (username, hashed_password)).fetchone()
+
+        if user:
+            session['user_id'] = user['id']
+            session['role'] = user['role']
+            return redirect(url_for('dashboard'))
+        else:
+            return render_template_string('''
+                <!doctype html>
+                <html lang="en">
+                <head>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+                    <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" rel="stylesheet">
+                    <title>Login</title>
+                </head>
+                <body>
+                    <div class="container">
+                        <h1 class="mt-5">Login</h1>
+                        <div class="alert alert-danger" role="alert">Invalid credentials!</div>
+                        <form method="post">
+                            <div class="form-group">
+                                <label for="username">Username</label>
+                                <input type="text" class="form-control" id="username" name="username">
+                            </div>
+                            <div class="form-group">
+                                <label for="password">Password</label>
+                                <input type="password" class="form-control" id="password" name="password">
+                            </div>
+                            <button type="submit" class="btn btn-primary">Login</button>
+                        </form>
+                    </div>
+                </body>
+                </html>
+            ''')
+    return render_template_string('''
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+            <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" rel="stylesheet">
+            <title>Login</title>
+        </head>
+        <body>
+            <div class="container">
+                <h1 class="mt-5">Login</h1>
+                <form method="post">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" class="form-control" id="username" name="username">
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" class="form-control" id="password" name="password">
+                    </div>
+                    <button type="submit" class="btn btn-primary">Login</button>
+                </form>
+            </div>
+        </body>
+        </html>
+    ''')
+
+
+@app.route('/dashboard')
+def dashboard():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    user_id = session['user_id']
+    conn = get_db_connection()
+    comments = conn.execute(
+        "SELECT comment FROM comments WHERE user_id = ?", (user_id,)).fetchall()
+    conn.close()
+
+    return render_template_string('''
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+            <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" rel="stylesheet">
+            <title>Dashboard</title>
+        </head>
+        <body>
+            <div class="container">
+                <h1 class="mt-5">Welcome, user {{ user_id }}!</h1>
+                <form action="/submit_comment" method="post">
+                    <div class="form-group">
+                        <label for="comment">Comment</label>
+                        <textarea class="form-control" id="comment" name="comment" rows="3"></textarea>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Submit Comment</button>
+                </form>
+                <h2 class="mt-5">Your Comments</h2>
+                <ul class="list-group">
+                    {% for comment in comments %}
+                        <li class="list-group-item">{{ comment['comment'] }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </body>
+        </html>
+    ''', user_id=user_id, comments=comments)
+
+
+@app.route('/submit_comment', methods=['POST'])
+def submit_comment():
+    if 'user_id' not in session:
+        return redirect(url_for('login'))
+
+    comment = request.form['comment']
+    user_id = session['user_id']
+
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO comments (user_id, comment) VALUES (?, ?)", (user_id, comment))
+    conn.commit()
+    conn.close()
+
+    return redirect(url_for('dashboard'))
+
+
+@app.route('/admin')
+def admin():
+    if 'user_id' not in session or session.get('role') != 'admin':
+        return redirect(url_for('login'))
+
+    return render_template_string('''
+        <!doctype html>
+        <html lang="en">
+        <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+            <link href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" rel="stylesheet">
+            <title>Admin Panel</title>
+        </head>
+        <body>
+            <div class="container">
+                <h1 class="mt-5">Welcome to the admin panel!</h1>
+            </div>
+        </body>
+        </html>
+    ''')
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
