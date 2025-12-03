@@ -13,28 +13,17 @@ pipeline {
         stage('Install Tools') {
             steps {
                 sh '''
-                    # Reparar e instalar dependencias
                     dpkg --configure -a || true
                     apt-get update
                     apt-get install -y --fix-missing python3 python3-venv python3-pip doxygen graphviz wget default-jre
                     
-                    # Instalación de ZAP (Versión Actualizada 2.15.0)
                     if [ ! -f "$ZAP_DIR/zap.sh" ]; then
                         echo "Instalando OWASP ZAP 2.15.0..."
                         rm -rf $ZAP_DIR
                         mkdir -p $ZAP_DIR
-                        
-                        # Descargamos la versión 2.15.0 (Sin -q para ver errores si falla)
-                        echo "Descargando desde GitHub..."
                         wget -O /tmp/zap.tar.gz https://github.com/zaproxy/zaproxy/releases/download/v2.15.0/ZAP_2.15.0_Linux.tar.gz
-                        
-                        echo "Descomprimiendo..."
                         tar -xvzf /tmp/zap.tar.gz -C $ZAP_DIR --strip-components=1
-                        
-                        # Dar permisos de ejecución
                         chmod +x $ZAP_DIR/zap.sh
-                    else
-                        echo "ZAP ya está instalado correctamente."
                     fi
                 '''
             }
@@ -94,34 +83,36 @@ pipeline {
                 sh '''
                     . venv/bin/activate
                     
-                    # 1. Iniciar servidor Flask en background
+                    # Debug: Verificar versión de Java (ZAP necesita Java 11+)
+                    echo "Versión de Java:"
+                    java -version
+                    
                     echo "Iniciando servidor Flask..."
                     nohup python3 vulnerable_flask_app.py > flask.log 2>&1 &
                     SERVER_PID=$!
-                    echo "Servidor iniciado con PID: $SERVER_PID"
-                    
-                    # 2. Esperar a que arranque
                     sleep 15
                     
-                    # Verificar si el servidor sigue vivo
+                    # Verificar si Flask sigue vivo
                     if ! kill -0 $SERVER_PID > /dev/null 2>&1; then
-                        echo "ERROR: El servidor Flask murió inmediatamente. Logs:"
+                        echo "ERROR: El servidor Flask murió. Logs:"
                         cat flask.log
                         exit 1
                     fi
                     
-                    # 3. Atacar con ZAP
-                    echo "Ejecutando ZAP..."
-                    if [ -f "$ZAP_DIR/zap.sh" ]; then
-                        $ZAP_DIR/zap.sh -cmd -quickurl http://127.0.0.1:5000 -quickout $(pwd)/zap_report.html || true
+                    echo "Atacando con ZAP..."
+                    # EJECUCIÓN SIN SILENCIADOR DE ERRORES
+                    # Usamos ruta explícita para el reporte
+                    /opt/zap/zap.sh -cmd -quickurl http://127.0.0.1:5000 -quickout $(pwd)/zap_report.html
+                    
+                    # Verificación final
+                    if [ -f "zap_report.html" ]; then
+                        echo "EXITO: El reporte se generó correctamente."
+                        ls -l zap_report.html
                     else
-                        echo "ERROR CRÍTICO: No encuentro zap.sh en $ZAP_DIR"
-                        ls -R $ZAP_DIR
+                        echo "ERROR: ZAP terminó pero NO generó el reporte."
                         exit 1
                     fi
                     
-                    # 4. Matar servidor
-                    echo "Apagando servidor..."
                     kill $SERVER_PID || true
                 '''
             }
@@ -137,7 +128,6 @@ pipeline {
                     echo "GENERATE_HTML     = YES" >> Doxyfile.clean
                     echo "HAVE_DOT          = YES" >> Doxyfile.clean
                     echo "EXTRACT_ALL       = YES" >> Doxyfile.clean
-                    
                     doxygen Doxyfile.clean
                 '''
             }
