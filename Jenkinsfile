@@ -96,7 +96,7 @@ pipeline {
                     
                     # 1. Iniciar servidor Flask en background
                     echo "Iniciando servidor Flask..."
-                    nohup python3 vulnerable_server.py > flask.log 2>&1 &
+                    nohup python3 vulnerable_flask_app.py > flask.log 2>&1 &
                     SERVER_PID=$!
                     echo "Servidor iniciado con PID: $SERVER_PID"
                     
@@ -131,7 +131,7 @@ pipeline {
             steps {
                 sh '''
                     FILES=$(find . -path "./venv" -prune -o -name "*.py" -print | tr '\n' ' ')
-                    echo "PROJECT_NAME      = 'Proyecto Vulnerable'" > Doxyfile.clean
+                    echo "PROJECT_NAME      = 'Examen'" > Doxyfile.clean
                     echo "OUTPUT_DIRECTORY  = docs" >> Doxyfile.clean
                     echo "INPUT             = $FILES" >> Doxyfile.clean
                     echo "GENERATE_HTML     = YES" >> Doxyfile.clean
