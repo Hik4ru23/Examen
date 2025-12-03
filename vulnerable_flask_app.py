@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        PROJECT_NAME = "pipeline-test"
+        PROJECT_NAME = "Examen"
         SONARQUBE_URL = "http://sonarqube:9000"
         SONARQUBE_TOKEN = "sqa_b2152858c8eb361e87d72375849dfe0a986cdb86"
         TARGET_URL = "http://172.20.190.71:5000"
@@ -90,7 +90,7 @@ pipeline {
                     # 1. Ejecutar servidor en segundo plano (nohup)
                     # Redirigimos la salida a /dev/null para no llenar el log
                     echo "Iniciando servidor Flask en background..."
-                    nohup python3 vulnerable_server.py > /dev/null 2>&1 &
+                    nohup python3 vulnerable_flask_app.py > /dev/null 2>&1 &
                     
                     # Guardamos el PID (Process ID) para matarlo luego
                     SERVER_PID=$!
@@ -117,7 +117,7 @@ pipeline {
             steps {
                 sh '''
                     FILES=$(find . -path "./venv" -prune -o -name "*.py" -print | tr '\n' ' ')
-                    echo "PROJECT_NAME      = 'Proyecto Vulnerable'" > Doxyfile.clean
+                    echo "PROJECT_NAME      = 'Examen'" > Doxyfile.clean
                     echo "OUTPUT_DIRECTORY  = docs" >> Doxyfile.clean
                     echo "INPUT             = $FILES" >> Doxyfile.clean
                     echo "GENERATE_HTML     = YES" >> Doxyfile.clean
