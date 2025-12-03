@@ -10,22 +10,26 @@ pipeline {
         ZAP_DIR = "/opt/zap"
     }
 
-    stages {
-        stage('Install Tools') {
+    stage('Install Tools') {
             steps {
                 sh '''
-                    apt update
-                    # 1. Instalamos dependencias: wget (para descargar) y Java (necesario para ZAP)
-                    apt install -y python3 python3-venv python3-pip doxygen graphviz wget default-jre
+                    # 1. Intentar arreglar instalaciones rotas previas (por si se canceló el build)
+                    dpkg --configure -a || true
                     
-                    # 2. Instalamos ZAP si no existe
+                    # 2. Actualizar lista de paquetes
+                    apt-get update
+                    
+                    # 3. Instalamos dependencias con la opción --fix-missing para ser más resilientes
+                    # Agregamos wget, java, doxygen, graphviz
+                    apt-get install -y --fix-missing python3 python3-venv python3-pip doxygen graphviz wget default-jre
+                    
+                    # 4. Instalación de OWASP ZAP
                     if [ ! -d "$ZAP_DIR" ]; then
                         echo "ZAP no encontrado. Descargando e instalando..."
                         mkdir -p $ZAP_DIR
-                        # Descargar la versión Linux de ZAP
                         wget -qO- https://github.com/zaproxy/zaproxy/releases/download/v2.14.0/ZAP_2.14.0_Linux.tar.gz | tar xvz -C $ZAP_DIR --strip-components=1
                     else
-                        echo "ZAP ya está instalado en $ZAP_DIR"
+                        echo "ZAP ya está instalado."
                     fi
                 '''
             }
