@@ -18,14 +18,17 @@ pipeline {
                     apt-get update
                     apt-get install -y --fix-missing python3 python3-venv python3-pip doxygen graphviz wget default-jre
                     
-                    # Instalación de ZAP (Versión Robustecida)
+                    # Instalación de ZAP (Versión Actualizada 2.15.0)
                     if [ ! -f "$ZAP_DIR/zap.sh" ]; then
-                        echo "Instalando OWASP ZAP..."
+                        echo "Instalando OWASP ZAP 2.15.0..."
                         rm -rf $ZAP_DIR
                         mkdir -p $ZAP_DIR
                         
-                        # Descargar y descomprimir
-                        wget -qO /tmp/zap.tar.gz https://github.com/zaproxy/zaproxy/releases/download/v2.14.0/ZAP_2.14.0_Linux.tar.gz
+                        # Descargamos la versión 2.15.0 (Sin -q para ver errores si falla)
+                        echo "Descargando desde GitHub..."
+                        wget -O /tmp/zap.tar.gz https://github.com/zaproxy/zaproxy/releases/download/v2.15.0/ZAP_2.15.0_Linux.tar.gz
+                        
+                        echo "Descomprimiendo..."
                         tar -xvzf /tmp/zap.tar.gz -C $ZAP_DIR --strip-components=1
                         
                         # Dar permisos de ejecución
@@ -93,7 +96,6 @@ pipeline {
                     
                     # 1. Iniciar servidor Flask en background
                     echo "Iniciando servidor Flask..."
-                    # Usamos python3 explícitamente y redirigimos salida
                     nohup python3 vulnerable_server.py > flask.log 2>&1 &
                     SERVER_PID=$!
                     echo "Servidor iniciado con PID: $SERVER_PID"
@@ -101,7 +103,7 @@ pipeline {
                     # 2. Esperar a que arranque
                     sleep 15
                     
-                    # Verificar si el servidor sigue vivo (si murió, mostrar log)
+                    # Verificar si el servidor sigue vivo
                     if ! kill -0 $SERVER_PID > /dev/null 2>&1; then
                         echo "ERROR: El servidor Flask murió inmediatamente. Logs:"
                         cat flask.log
