@@ -150,6 +150,15 @@ pipeline {
                     reportFiles: 'zap_report.html',
                     reportName: 'OWASP ZAP DAST Report'
                 ])
+                
+                publishHTML([
+                    allowMissing: false,
+                    alwaysLinkToLastBuild: true,
+                    keepAll: true,
+                    reportDir: '.',   // El punto significa "carpeta actual"
+                    reportFiles: 'zap_report.html',
+                    reportName: 'OWASP ZAP DAST Report'
+                ])
 
                 // Publicar Doxygen
                 publishHTML([
