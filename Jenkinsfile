@@ -6,7 +6,6 @@ pipeline {
         SONARQUBE_URL = "http://sonarqube:9000"
         SONARQUBE_TOKEN = "sqa_b2152858c8eb361e87d72375849dfe0a986cdb86"
         TARGET_URL = "http://172.20.190.71:5000"
-        // Definimos la ruta donde instalaremos ZAP
         ZAP_DIR = "/opt/zap"
     }
 
@@ -14,20 +13,25 @@ pipeline {
         stage('Install Tools') {
             steps {
                 sh '''
-                    # Intentar arreglar instalaciones previas rotas
+                    # Reparar e instalar dependencias
                     dpkg --configure -a || true
                     apt-get update
-                    
-                    # Instalamos python, entorno, doxygen, graphviz, wget y Java (para ZAP)
                     apt-get install -y --fix-missing python3 python3-venv python3-pip doxygen graphviz wget default-jre
                     
-                    # Instalamos OWASP ZAP si no existe
-                    if [ ! -d "$ZAP_DIR" ]; then
+                    # Instalación de ZAP (Versión Robustecida)
+                    if [ ! -f "$ZAP_DIR/zap.sh" ]; then
                         echo "Instalando OWASP ZAP..."
+                        rm -rf $ZAP_DIR
                         mkdir -p $ZAP_DIR
-                        wget -qO- https://github.com/zaproxy/zaproxy/releases/download/v2.14.0/ZAP_2.14.0_Linux.tar.gz | tar xvz -C $ZAP_DIR --strip-components=1
+                        
+                        # Descargar y descomprimir
+                        wget -qO /tmp/zap.tar.gz https://github.com/zaproxy/zaproxy/releases/download/v2.14.0/ZAP_2.14.0_Linux.tar.gz
+                        tar -xvzf /tmp/zap.tar.gz -C $ZAP_DIR --strip-components=1
+                        
+                        # Dar permisos de ejecución
+                        chmod +x $ZAP_DIR/zap.sh
                     else
-                        echo "ZAP ya está instalado."
+                        echo "ZAP ya está instalado correctamente."
                     fi
                 '''
             }
@@ -88,20 +92,35 @@ pipeline {
                     . venv/bin/activate
                     
                     # 1. Iniciar servidor Flask en background
-                    echo "Iniciando servidor..."
-                    nohup python3 vulnerable_server.py > /dev/null 2>&1 &
+                    echo "Iniciando servidor Flask..."
+                    # Usamos python3 explícitamente y redirigimos salida
+                    nohup python3 vulnerable_server.py > flask.log 2>&1 &
                     SERVER_PID=$!
+                    echo "Servidor iniciado con PID: $SERVER_PID"
                     
                     # 2. Esperar a que arranque
-                    sleep 10
+                    sleep 15
+                    
+                    # Verificar si el servidor sigue vivo (si murió, mostrar log)
+                    if ! kill -0 $SERVER_PID > /dev/null 2>&1; then
+                        echo "ERROR: El servidor Flask murió inmediatamente. Logs:"
+                        cat flask.log
+                        exit 1
+                    fi
                     
                     # 3. Atacar con ZAP
-                    echo "Atacando con ZAP..."
-                    $ZAP_DIR/zap.sh -cmd -quickurl http://127.0.0.1:5000 -quickout $(pwd)/zap_report.html || true
+                    echo "Ejecutando ZAP..."
+                    if [ -f "$ZAP_DIR/zap.sh" ]; then
+                        $ZAP_DIR/zap.sh -cmd -quickurl http://127.0.0.1:5000 -quickout $(pwd)/zap_report.html || true
+                    else
+                        echo "ERROR CRÍTICO: No encuentro zap.sh en $ZAP_DIR"
+                        ls -R $ZAP_DIR
+                        exit 1
+                    fi
                     
                     # 4. Matar servidor
                     echo "Apagando servidor..."
-                    kill $SERVER_PID
+                    kill $SERVER_PID || true
                 '''
             }
         }
@@ -109,9 +128,7 @@ pipeline {
         stage('Generate Documentation') {
             steps {
                 sh '''
-                    # Estrategia de lista blanca para Doxygen
                     FILES=$(find . -path "./venv" -prune -o -name "*.py" -print | tr '\n' ' ')
-                    
                     echo "PROJECT_NAME      = 'Proyecto Vulnerable'" > Doxyfile.clean
                     echo "OUTPUT_DIRECTORY  = docs" >> Doxyfile.clean
                     echo "INPUT             = $FILES" >> Doxyfile.clean
